@@ -1,0 +1,124 @@
+#!/usr/bin/awk -f
+#
+# maillogfilter
+#
+# show maillog with colorizer
+#
+# date		comment
+# 2015/03/31	postfix のログからドメイン名を自動取得するように修正
+# 2014/12/07	初期バージョン
+
+BEGIN {
+	# postfix の設定ファイルからドメイン名を取得する処理
+	FS_BACKUP=FS
+	FS="[\t =]+"
+	while ( getline < "/etc/postfix/main.cf" ) {
+		if ( $1=="mydomain" ) { mydomain=$2 }
+	}
+	FS=FS_BACKUP
+
+	regex_mydomain="@" mydomain
+	regex_saslauth="^sasl_username=.*\." mydomain "$"
+
+	RESET="\033[0m"
+
+	BOLD="1m"
+	ITALIC="3m"
+	UNDERLINE="4m"
+	BLINK="5m"
+	REVERSE="7m"
+
+	BLACK="\033[30"
+	RED="\033[31"
+	GREEN="\033[32"
+	BROWN="\033[33"
+	BLUE="\033[34"
+	PURPLE="\033[35"
+	CYAN="\033[36"
+	WHITE="\033[37"
+
+	BG_BLACK="40"
+	BG_RED="41"
+	BG_GREEN="42"
+	BG_BROWN="43"
+	BG_BLUE="44"
+	BG_PURPLE="45"
+	BG_CYAN="46"
+	BG_WHITE="47"
+}
+
+# for postfix log format
+$5 ~ /postfix/ {
+	if ( $6 ~ /^warning:$/ ) {
+		gsub( $6,  RED";"BOLD""$6""RESET, $6 )
+	} else if ( $7 ~ /^reject:$/ ) {
+		gsub( $7,  RED";"BOLD""$7""RESET, $7 )
+
+
+		if ( $13 == "Client" ) {
+			gsub( $13,  RED";"BOLD""$13, $13 )
+			for ( i = 18 ; i < NF ; i++ ) {
+				if ( $i == "hostname," ) {
+					$(i+1) = $(i+1)""RESET
+				}
+			}
+		} else {
+			gsub( $14,  RED";"BOLD""$14, $14 )
+			for ( i = 14 ; i < NF ; i++ ) {
+				if ( $i ~ />$/ ) {
+					gsub( $i,  $i""RESET, $i )
+				}
+			}
+		}
+
+	} else if ( match( $7, regex_mydomain ) ) {
+		gsub( $7,  CYAN";"BOLD""$7""RESET, $7 )
+	} else if ( $7 ~ /^from=/ || $7 ~ /^to=/ ) {
+		gsub( $7,  PURPLE";"BOLD""$7""RESET, $7 )
+	} else if ( match( $9, regex_saslauth ) ) {
+		gsub( $9,  CYAN";"BOLD""$9""RESET, $9 )
+	}
+
+	if ( $12 ~ /status=sent/ ) {
+		gsub( $12,  GREEN";"BOLD""$12""RESET, $12 )
+	} else if ( $12 ~ /status=deferred/ ) {
+		gsub( $12,  RED";"BOLD""$12, $12 )
+		gsub( $NF,  $NF""RESET, $NF )
+	} else if ( $12 ~ /status=bounced/ ) {
+		gsub( $12,  RED";"BOLD""$12""RESET, $12 )
+		gsub( $16,  RED";"BOLD""$16, $16 )
+		gsub( $NF,  $NF""RESET, $NF )
+	}
+}
+
+# for dovecot log
+$5 == "dovecot:" {
+	if( $7 == "Login:" ) {
+		gsub( $6,  CYAN";"BOLD""$6, $6 )
+		gsub( $8,  $8""RESET, $8 )
+
+		for ( i = 10 ; i <= NF ; i++ ) {
+			if ( $i ~ /^rip/ ) {
+
+				if ( $i ~ /:172.16./ ) {
+					gsub( $i,  GREEN";"BOLD""$i""RESET, $i )
+				} else {
+					gsub( $i,  PURPLE";"BOLD""$i""RESET, $i )
+				}
+			}
+		}
+	} else if ( $6 == "pop3-login:" ) {
+		if ( $7 == "Disconnected:" || $7 == "Aborted" ) {
+			if ($8 !~ /^user/ ) {
+				gsub( $6, RED";"BOLD""$6, $6 )
+				gsub( $7, $7""RESET, $7 )
+			}
+		}
+	}
+}
+
+{
+	print
+	fflush()
+}
+

@@ -1,0 +1,63 @@
+#!/usr/bin/awk -f
+#
+# メールログから postfix のログだけを抜き出して
+# メールの処理順に並べるスクリプトのテスト
+
+$5 ~ /postfix/ {
+	pid=$5
+	queueid=$6
+	status=$7
+	queueid_stack[pid] += 0
+
+	# warning や connect 等ではない文字列がキューIDの個所に出現したら、
+	# それをキューIDとみなす
+	if (	queueid_stack[pid] > 0 &&
+		queueid !~ /^warning/ &&
+		queueid !~ /^connect/ &&
+		queueid !~ /^disconnect/ &&
+		queueid !~ /~lost/ ) {
+		for ( i = 0 ; i < queueid_stack[pid] ; i++ ) {
+			maillog[queueid,i]=connectlog[pid,i]
+			delete connectlog[pid,i]
+		}
+		queueid_count[queueid]=queueid_stack[pid]
+#		queueid_stack[pid] = queueid
+	}
+
+	if ( queueid ~ /^warning/ || queueid ~ /^connect/ ) {
+		# warning や connect の時点では QUEIEID が紐づかないので、
+		# 行をそのまま一旦バッファリングする
+		# このときにログに出現する "postfix/smtpd[PID]:" の文字列を
+		# 識別用に用いる。
+		queueid_stack[pid]+=0
+		connectlog[pid,queueid_stack[pid]]=$0
+		queueid_stack[pid]++
+	} else if ( queueid ~ /^disconnect/ ) {
+		# diconnect は QUEIEID が紐づかないので一旦バッファリングする
+		queueid_count[queueid_stack[pid]]++
+		maillog[queueid_stack[pid],queueid_count[queueid_stack[pid]]]=$0
+
+		# NOQUEUE は removed と同じ扱いとする。
+		if ( queueid_stack[pid] == "NOQUEUE:" ) {
+			queueid=queueid_stack[pid]
+			status = "removed"
+		}
+		delete queueid_stack[pid]
+
+	} else {
+		queueid_count[queueid]++
+		maillog[queueid,queueid_count[queueid]]=$0
+	}
+
+	# ステータスが removed まで来たら、
+	# 一連のメールログをまとめて吐きだす。
+	if ( status == "removed" ) {
+		for ( i = 0 ; i < queueid_count[queueid]; i++ ) {
+			print maillog[queueid,i]
+			delete maillog[queueid,i]
+		}
+		printf "%s\n\n",$0
+		delete queueid_count[queueid]
+		fflush()
+	}
+}
